@@ -7,13 +7,14 @@ import pytest
 import random
 import numpy as np
 import cupy as cp
+from enum import Enum
 
 cudense = pytest.importorskip("cuquantum.densitymat")
 
 from qutip_cuquantum.operator import CuOperator, ProdTerm, Term
 from qutip_cuquantum.utils import Transform
 from qutip_cuquantum.state import CuState
-from qutip_cuquantum.mixed_dispatch import matmul_cuoperator_custate_custate
+from qutip_cuquantum.mixed_dispatch import matmul_cuoperator_custate_custate, matmul_custate_cuoperator_custate
 import qutip_cuquantum
 cudm_ctx = cudense.WorkStream()
 qutip_cuquantum.set_as_default(cudm_ctx)
@@ -97,6 +98,14 @@ def cases_cuoperator(hilbert):
 
     return cases
 
+class StateType(Enum):
+    """Enumeration for quantum state types."""
+    KET = 1       # Pure state, column vector (N, 1)
+    BRA = 2       # Pure state, row vector (1, N)
+    DM = 3        # Density matrix (N, N)
+    # DM_VECTOR = 4 # Density matrix as a vector (N*N, 1)
+
+
 
 def random_pure_custate(hilbert):
     """Generate a random `CuPyDense` matrix with the given shape."""
@@ -119,11 +128,28 @@ def random_mixed_custate(hilbert):
 
 
 def random_custate(shape):
-    *hilbert, pure = shape
-    if pure:
+    *hilbert, state_type = shape
+
+    if isinstance(state_type, int):
+        # Special handling for shapes from generate_scalar_is_ket
+        if(state_type == 1):
+            state_type = StateType.KET
+        else:
+            raise ValueError(f"Unsupported state type: {state_type}")
+
+    if state_type == StateType.KET:
         return random_pure_custate(hilbert)
-    else:
+    elif state_type == StateType.DM:
         return random_mixed_custate(hilbert)
+    elif state_type == StateType.BRA:
+        state = random_pure_custate(hilbert)
+        ket_state = random_pure_custate(hilbert)
+        return CuState(ket_state.base, shape=(ket_state.shape[1], ket_state.shape[0]), copy=False)
+    # elif state_type == StateType.DM_VECTOR:
+    #     state = random_mixed_custate(hilbert)
+    #     return CuState(state.base, shape=(state.shape[0] * state.shape[1], 1), copy=False)
+    else:
+        raise ValueError(f"Unsupported state type: {state_type}")
 
 
 test_tools._ALL_CASES = {
@@ -136,27 +162,57 @@ test_tools._RANDOM = {
     CuState: lambda shape: [lambda: random_custate(shape),],
 }
 
-_compatible_hilbert = [
-    (pytest.param((2,), id="single"), pytest.param((2, True), id="single")),
-    (pytest.param((2, 3), id="double"), pytest.param((2, 3, False), id="2-ket")),
-    (pytest.param((-6,), id="single_weak"), pytest.param((2, 3, True), id="2-dm")),
-    (pytest.param((2, -4), id="double_weak"), pytest.param((2, 2, 2, False), id="3-ket")),
-    (pytest.param((2, 2, 2), id="triple"), pytest.param((2, 2, 2, True), id="3-dm")),
+_compatible_op_state = [
+    (pytest.param((2,), id="single"), pytest.param((2, StateType.KET), id="single")),
+    (pytest.param((2, 3), id="double"), pytest.param((2, 3, StateType.DM), id="2-dm")),
+    (pytest.param((-6,), id="single_weak"), pytest.param((2, 3, StateType.KET), id="2-ket")),
+    (pytest.param((2, -4), id="double_weak"), pytest.param((2, 2, 2, StateType.DM), id="3-dm")),
+    (pytest.param((2, 2, 2), id="triple"), pytest.param((2, 2, 2, StateType.KET), id="3-ket")),
+    # (pytest.param((2, 2, 2, 2, 2, 2), id="triple supeop"), pytest.param((2, 2, 2, StateType.DM_VECTOR), id="3-dm_vector")),
 ]
 
-_imcompatible_hilbert = [
-    (pytest.param((2,), id="single"), pytest.param((3, False), id="different")),
-    (pytest.param((2, 3), id="double"), pytest.param((6, False), id="merged")),
-    (pytest.param((2, 3), id="double"), pytest.param((3, 2, False), id="inverted")),
-    (pytest.param((2, -4), id="double_weak"), pytest.param((4, 2, False), id="double_weak")),
-    (pytest.param((2, 3, -4), id="complex"), pytest.param((6, 2, 2, False), id="complex")),
+_imcompatible_op_state = [
+    (pytest.param((2,), id="single"), pytest.param((3, StateType.DM), id="different")),
+    (pytest.param((2, 3), id="double"), pytest.param((6, StateType.DM), id="merged")),
+    (pytest.param((2, 3), id="double"), pytest.param((3, 2, StateType.DM), id="inverted")),
+    (pytest.param((2, -4), id="double_weak"), pytest.param((4, 2, StateType.DM), id="double_weak")),
+    (pytest.param((2, 3, -4), id="complex"), pytest.param((6, 2, 2, StateType.DM), id="complex")),
+    (pytest.param((2,), id="dm"), pytest.param((2, StateType.BRA), id="bra")),    
 ]
 
 
-class TestMatmul(test_tools.TestMatmul):
+class TestOpStateMatmul(test_tools.TestMatmul):
     specialisations = [
         pytest.param(matmul_cuoperator_custate_custate, CuOperator, CuState, CuState),
     ]
 
-    shapes = _compatible_hilbert
-    bad_shapes = _imcompatible_hilbert
+    shapes = _compatible_op_state
+    bad_shapes = _imcompatible_op_state
+
+_compatible_state_op = [
+    (pytest.param((2, StateType.BRA), id="single"), pytest.param( (2,), id="single")),
+    (pytest.param((2, 3, StateType.BRA), id="2-bra"), pytest.param( (2, 3), id="double")),
+    (pytest.param((2, 3, StateType.DM), id="2-dm"), pytest.param((-6,), id="single_weak")),
+    (pytest.param((2, 2, 2, StateType.BRA), id="3-bra"), pytest.param((2, -4), id="double_weak")),
+    (pytest.param((2, 2, 2, StateType.DM), id="3-dm"), pytest.param((2, 2, 2), id="triple")),
+]
+
+_imcompatible_state_op = [
+    (pytest.param((2, StateType.KET), id="single"), pytest.param( (2,), id="single")),
+]
+
+class TestStateOpMatmul(test_tools.TestMatmul):
+    specialisations = [
+        pytest.param(matmul_custate_cuoperator_custate, CuState, CuOperator, CuState),
+    ]
+
+    shapes = _compatible_state_op
+    bad_shapes = _imcompatible_state_op
+
+
+def test_mixed_dispatch_dual_op_dm():
+    op = random_CuOperator((2, 3, 2, 3), [5], 0)
+    state = random_custate((2, 3, StateType.DM))
+    actual = matmul_cuoperator_custate_custate(op, state).to_array().ravel('F')
+    expected = np.matmul(op.to_array(), state.to_array().ravel('F'))
+    np.testing.assert_allclose(actual, expected, atol=1e-10, rtol=1e-7)    

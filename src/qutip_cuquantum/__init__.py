@@ -28,7 +28,7 @@ from qutip.core.options import QutipOptions
 from .operator import CuOperator
 from .state import CuState
 import numpy
-
+from .mixed_dispatch import * #Ensure that the mixed dispatch is registered
 
 # TODO: The split per density is not great
 # Add an operator / state split in qutip?
