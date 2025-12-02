@@ -12,6 +12,8 @@ try:
 except ImportError:
     CuPyDense = None
 
+def ensure_copy(x):
+    return x if x.base is None else x.copy()
 
 class CuState(Data):
     def __init__(self, arg, hilbert_dims=None, shape=None, copy=True):
@@ -145,7 +147,8 @@ class CuState(Data):
             if isinstance(other, Data):
                 return _data.add(self, other)
             return NotImplemented
-
+        if(self.shape != other.shape):
+            raise ValueError("Incompatible shapes")
         new = self.copy()
         new.base.inplace_accumulate(other.base, 1.)
         return new
@@ -156,6 +159,8 @@ class CuState(Data):
                 return _data.sub(self, other)
             return NotImplemented
 
+        if(self.shape != other.shape):
+            raise ValueError("Incompatible shapes")
         new = self.copy()
         new.base.inplace_accumulate(other.base, -1.)
         return new
@@ -175,17 +180,37 @@ class CuState(Data):
         )
 
     def transpose(self):
-        raise NotImplementedError()
+        arr = self.to_cupy().transpose()
+        if(type(self.base) is DenseMixedState):
+            arr = arr.reshape(self.base.hilbert_space_dims * 2).ravel("F")
+        else:
+            arr = arr.reshape(self.base.hilbert_space_dims).ravel("F")
+        arr = ensure_copy(arr)
+        return CuState(
+            self.base.clone(arr),
+            shape=(self.shape[1], self.shape[0])
+        )
+
 
     def adjoint(self):
-        raise NotImplementedError()
+        arr = self.to_cupy().transpose()
+        if(type(self.base) is DenseMixedState):
+            arr = arr.reshape(self.base.hilbert_space_dims * 2).ravel("F")
 
+        else:
+            arr = arr.reshape(self.base.hilbert_space_dims).ravel("F")
+        arr = arr.conj()
+        return CuState(
+            self.base.clone(arr),
+            shape=(self.shape[1], self.shape[0])
+        )
 
 def CuState_from_Dense(mat):
     return CuState(mat)
 
 
 def Dense_from_CuState(mat):
+    print("Dense_from_CuState")
     return _data.Dense(mat.to_array())
 
 
@@ -300,3 +325,58 @@ def isherm(state, tol=-1):
 
 def zeros_like_cuState(state):
     return CuState(state.base.clone(cp.zeros_like(state.base.storage, order="F")))
+
+@_data.conj.register(CuState)
+def conj_cuState(state):
+    return state.conj()
+
+@_data.transpose.register(CuState)
+def transpose_cuState(state):
+    return state.transpose()
+
+@_data.adjoint.register(CuState)
+def adjoint_cuState(state):
+    return state.adjoint()
+
+@_data.sub.register(CuState)
+def sub_cuState(left, right):
+    return add_cuState(left, right, -1)
+    
+@_data.iszero.register(CuState)
+def iszero_cuState(state):
+    return not cp.any(state.base.storage)
+
+
+@_data.matmul.register(CuState)
+def matmul_cuState(left, right):
+    if(left.shape[1] != right.shape[0]):
+        raise ValueError("Incompatible shapes")
+
+    if left.base.hilbert_space_dims != right.base.hilbert_space_dims:
+        raise ValueError(
+            f"Incompatible hilbert space: {left.base.hilbert_space_dims} "
+            f"and {right.base.hilbert_space_dims}."
+        )
+
+    output_shape = (left.shape[0], right.shape[1])
+    ctx = settings.cuDensity["ctx"]
+    hilbert_dims = left.base.hilbert_space_dims
+
+    left_array = left.to_cupy()
+    right_array = right.to_cupy()
+    arr = left_array @ right_array
+    
+    if(left.shape[0] == 1 and right.shape[1] == 1):
+        # Scalar case
+        base = DensePureState(ctx, (1,), 1, "complex128")
+    elif(output_shape[0] == 1 or output_shape[1] == 1):
+        base = DensePureState(ctx, hilbert_dims, 1, "complex128")
+        arr = arr.reshape(hilbert_dims).ravel(order="F")
+    else:        
+        base = DenseMixedState(ctx, hilbert_dims, 1, "complex128")
+        arr = arr.reshape(hilbert_dims * 2).ravel(order="F")
+
+    # Make sure the array is not a view, to avoid later error in cuDM view() method
+    arr = ensure_copy(arr)
+    base.attach_storage(arr)
+    return CuState(base, shape=output_shape)
