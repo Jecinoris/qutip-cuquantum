@@ -2,7 +2,6 @@ import numpy as np
 import cupy as cp
 import pytest
 import qutip
-import qutip_cuquantum
 from qutip_cuquantum.state import CuState
 
 MPI = pytest.importorskip("mpi4py.MPI")

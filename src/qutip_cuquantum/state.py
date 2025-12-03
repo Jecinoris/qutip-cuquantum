@@ -18,8 +18,6 @@ try:
 except ImportError:
     MPI = None
 
-def ensure_copy(x):
-    return x if x.base is None else x.copy()
 
 class CuState(Data):
     def __init__(self, arg, hilbert_dims=None, shape=None, copy=True):
