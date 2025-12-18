@@ -1,7 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
-
 import numpy as np
 import cupy as cp
 import pytest
