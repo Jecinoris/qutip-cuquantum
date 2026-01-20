@@ -15,7 +15,6 @@ def matmul_cuoperator_custate_custate(left, right, scale=1., out=None):
         merged_hilbert = _compare_hilbert(left.hilbert_dims, right.base.hilbert_space_dims)
     elif left.shape[1] == right.shape[0] * right.shape[1]:
         dual = True
-        print(left.hilbert_dims[:len(left.hilbert_dims) // 2], right.base.hilbert_space_dims)
         merged_hilbert = _compare_hilbert(left.hilbert_dims[:len(left.hilbert_dims) // 2], right.base.hilbert_space_dims)
     else:
         raise ValueError("Shape missmatch")

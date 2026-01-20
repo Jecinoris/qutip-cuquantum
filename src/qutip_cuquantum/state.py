@@ -39,22 +39,34 @@ class CuState(Data):
         elif (CuPyDense is not None and isinstance(arg, CuPyDense)) or isinstance(arg, cp.ndarray):
             if CuPyDense is not None and isinstance(arg, CuPyDense):
                 arg = arg._cp
+
+            if arg.ndim == 1:
+                arg = arg.reshape(-1, 1)
+            elif arg.ndim > 2:
+                raise ValueError("Only 1D or 2D arrays are supported")
+
             if shape is None:
                 shape = arg.shape
             if hilbert_dims is None:
-                hilbert_dims = arg.shape[:1]
+                if(arg.shape[0] == 1):
+                    hilbert_dims = (arg.shape[1],)
+                else:
+                    hilbert_dims = (arg.shape[0],)
 
             if arg.shape[0] != 1 and arg.shape[1] != 1:
-                assert arg.shape[0] == np.prod(hilbert_dims) and arg.shape[1] == np.prod(hilbert_dims), "Shape does not match hilbert_dims"
+                is_hilbert_dim_matching = (arg.shape[0] == np.prod(hilbert_dims) and arg.shape[1] == np.prod(hilbert_dims))
+                if not is_hilbert_dim_matching:
+                    raise ValueError(f"Shape {arg.shape} does not match hilbert_dims {hilbert_dims} for mixed state")
                 base = DenseMixedState(ctx, hilbert_dims, 1, "complex128")
                 sizes, offsets = base.local_info
                 sls = tuple(slice(s, s+n) for s, n in zip(offsets, sizes))[:-1]
                 N = np.prod(sizes)
                 if len(arg) == N:
                     base.attach_storage(cp.array(
-                        arg._cp
+                        arg
                         .reshape(hilbert_dims * 2)[sls]
                         .ravel(order="F"),
+                        dtype="complex128",
                         copy=copy
                     ))
                 else:
@@ -66,6 +78,11 @@ class CuState(Data):
                     )
 
             else:
+                is_hilbert_dim_matching = ((arg.shape[1] == 1 and arg.shape[0] == np.prod(hilbert_dims)) or
+                                           (arg.shape[0] == 1 and arg.shape[1] == np.prod(hilbert_dims)))
+                if not is_hilbert_dim_matching:
+                    raise ValueError(f"Shape {arg.shape} does not match hilbert_dims {hilbert_dims} for pure state")
+
                 base = DensePureState(ctx, hilbert_dims, 1, "complex128")
                 sizes, offsets = base.local_info
                 sls = tuple(slice(s, s+n) for s, n in zip(offsets, sizes))[:-1]
@@ -74,7 +91,9 @@ class CuState(Data):
                     base.attach_storage(cp.array(
                         arg
                         .reshape(hilbert_dims)[sls]
-                        .ravel(order="F"), copy=copy
+                        .ravel(order="F"),
+                        dtype="complex128",
+                        copy=copy
                     ))
                 else:
                     base.allocate_storage()
