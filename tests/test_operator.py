@@ -5,95 +5,12 @@ import random
 cudense = pytest.importorskip("cuquantum.densitymat")
 
 import qutip
-from qutip_cuquantum.operator import CuOperator, ProdTerm, Term
-from qutip_cuquantum.utils import Transform
+from qutip_cuquantum.operator import CuOperator
 from qutip_cuquantum.state import zeros_like_cuState, CuState
 
 import qutip.core.data as _data
 import qutip.tests.core.data.test_mathematics as test_tools
-from qutip.tests.core.data.conftest import (
-    random_csr, random_dense, random_diag
-)
-
-
-def _rand_transform(gen):
-    """
-    Random transform between raw, dag, T, conj, with bias toward common cases.
-    """
-    return gen.choice(list(Transform), p=[0.4, 0.15, 0.15, 0.3])
-
-
-def _rand_elementary_oper(size, gen):
-    if gen.uniform() < 0.5:
-        # 50% Dia format
-        mat = random_diag((size, size), gen.uniform()*0.4, False, gen)
-    elif gen.uniform() < 0.6:
-        # 30% Dense format
-        mat = random_dense((size, size), gen.uniform() > 0.5, gen)
-    else:
-        # 20% CSR format (not fully supported, converted to dense eventually)
-        mat = random_csr((size, size), gen.uniform()*0.4, False, gen)
-
-    if gen.uniform() < 0.5:
-        # Use cuDensity format instead of qutip.
-        array_type = np if gen.uniform() < 0.5 else cp
-        if isinstance(mat, _data.Dia):
-            dia_matrix = mat.as_scipy()
-            offsets = list(dia_matrix.offsets)
-            data = array_type.zeros(
-                (dia_matrix.shape[0], len(offsets)),
-                dtype=complex,
-            )
-            for i, offset in enumerate(offsets):
-                end = None if offset == 0 else -abs(offset)
-                data[:end, i] = array_type.asarray( dia_matrix.diagonal(offset) )
-            mat = cudense.MultidiagonalOperator(data, offsets)
-
-        else:
-            mat = cudense.DenseOperator(array_type.array(mat.to_array()))
-
-    return mat
-
-
-def random_CuOperator(hilbert_dims, N_elementary, seed):
-    """
-    Generate a random `CuOperator` matrix with the given hilbert_dims.
-    """
-    generator = np.random.default_rng(seed)
-    out = CuOperator(hilbert_dims=hilbert_dims)
-    for N in N_elementary:
-        term = Term([], generator.normal() + 1j * generator.normal())
-        for _ in range(N):
-            mode = np.random.randint(len(hilbert_dims))
-            size = abs(hilbert_dims[mode])
-            oper = _rand_elementary_oper(size, generator)
-
-            term.prod_terms.append(ProdTerm(oper, (mode,), _rand_transform(generator)))
-        out.terms.append(term)
-    return out
-
-
-def cases_cuoperator(hilbert):
-    """Generate a random `CuPyDense` matrix with the given shape."""
-
-    def factory(N_elementary, seed):
-        return lambda: random_CuOperator(hilbert, N_elementary, seed)
-
-    cases = []
-
-    cases.append(pytest.param(factory([], 0), id="zero"))
-    cases.append(pytest.param(factory([0], 0), id="id"))
-    seed = random.randint(0, 2**31)
-    cases.append(pytest.param(factory([1], seed), id=f"simple_{seed}"))
-    seed = random.randint(0, 2**31)
-    cases.append(pytest.param(factory([3], seed), id=f"3_prods_{seed}"))
-    seed = random.randint(0, 2**31)
-    cases.append(pytest.param(factory([1, 1, 1], seed), id=f"3_terms_{seed}"))
-    seed = random.randint(0, 2**31)
-    cases.append(pytest.param(factory([1, 2, 3], seed), id=f"complex_{seed}"))
-
-    return cases
-
+from utils import random_CuOperator, cases_cuoperator
 
 test_tools._ALL_CASES = {
     CuOperator: cases_cuoperator,

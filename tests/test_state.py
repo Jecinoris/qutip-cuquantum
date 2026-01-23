@@ -1,15 +1,20 @@
+from typing import Any
+
+
 import numpy as np
 import cupy as cp
 import pytest
 import random
 import numbers
 from itertools import product
+from utils import StateType, random_custate
 cudense = pytest.importorskip("cuquantum.densitymat")
 
 import qutip
 from qutip_cuquantum.state import (
     CuState, iadd_cuState, add_cuState, mul_cuState, imul_cuState, l2_cuState,
-    frobenius_cuState, trace_cuState, inner_cuState, wrmn_error_cuState
+    frobenius_cuState, trace_cuState, inner_cuState, wrmn_error_cuState,
+    transpose_cuState, adjoint_cuState, matmul_cuState
 )
 
 import qutip.core.data as _data
@@ -17,35 +22,9 @@ import qutip.tests.core.data.test_mathematics as test_tools
 import qutip.tests.core.data.test_norm as test_norm
 
 
+
 qutip.settings.cuDensity["ctx"] = cudense.WorkStream()
 
-
-def random_pure_custate(hilbert):
-    """Generate a random `CuPyDense` matrix with the given shape."""
-    N = abs(np.prod(hilbert))
-    out = (
-        np.random.rand(N, 1) + 1j * np.random.rand(N, 1)
-    ).astype(cp.complex128)
-    out = qutip.core.data.Dense(out)
-    return CuState(out, hilbert, copy=False)
-
-
-def random_mixed_custate(hilbert):
-    """Generate a random `CuPyDense` matrix with the given shape."""
-    N = abs(np.prod(hilbert))
-    out = (
-        np.random.rand(N, N) + 1j * np.random.rand(N, N)
-    ).astype(cp.complex128)
-    out = qutip.core.data.Dense(out)
-    return CuState(out, hilbert, copy=False)
-
-
-def random_custate(shape):
-    *hilbert, pure = shape
-    if pure:
-        return random_pure_custate(hilbert)
-    else:
-        return random_mixed_custate(hilbert)
 
 
 test_tools._ALL_CASES = {
@@ -57,73 +36,113 @@ test_tools._RANDOM = {
 }
 
 _unary_pure = [
-    (pytest.param((2, True), id="simple ket"),),
-    (pytest.param((6, 6, True), id="2 hilbert ket"),),
-    (pytest.param((2, 2, 2, True), id="complex ket"),),
+    (pytest.param((2, StateType.KET), id="simple ket"),),
+    (pytest.param((6, 6, StateType.KET), id="2 hilbert ket"),),
+    (pytest.param((2, 2, 2, StateType.KET), id="complex ket"),),
 ]
 
 _unary_mixed = [
-    (pytest.param((3, False), id="scalar dm"),),
-    (pytest.param((2, 3, False), id="2 hilbert dm"),),
-    (pytest.param((2, 3, 4, False), id="complex dm"),),
+    (pytest.param((3, StateType.DM), id="scalar dm"),),
+    (pytest.param((2, 3, StateType.DM), id="2 hilbert dm"),),
+    (pytest.param((2, 3, 4, StateType.DM), id="complex dm"),),
 ]
 
 
 _compatible_hilbert = [
     (
-        pytest.param((2, True), id="simple ket"),
-         pytest.param((2, True), id="simple ket"),
+        pytest.param((2, StateType.KET), id="simple ket"),
+         pytest.param((2, StateType.KET), id="simple ket"),
     ),
     (
-        pytest.param((2, 3, True), id="2 hilbert ket"),
-        pytest.param((2, 3, True), id="weak ket"),
+        pytest.param((2, 3, StateType.KET), id="2 hilbert ket"),
+        pytest.param((2, 3, StateType.KET), id="weak ket"),
     ),
     (
-        pytest.param((2, 2, 2, 3, True), id="complex ket"),
-        pytest.param((2, 2, 2, 3, True), id="complex ket"),
+        pytest.param((2, 2, 2, 3, StateType.KET), id="complex ket"),
+        pytest.param((2, 2, 2, 3, StateType.KET), id="complex ket"),
     ),
     (
-        pytest.param((2, 3, False), id="2 hilbert dm"),
-        pytest.param((2, 3, False), id="2 hilbert dm"),
+        pytest.param((2, 3, StateType.DM), id="2 hilbert dm"),
+        pytest.param((2, 3, StateType.DM), id="2 hilbert dm"),
     ),
     (
-        pytest.param((2, 3, 2, False), id="3 hilbert dm"),
-        pytest.param((2, 3, 2, False), id="2 weak hilbert dm"),
+        pytest.param((2, 3, 2, StateType.DM), id="3 hilbert dm"),
+        pytest.param((2, 3, 2, StateType.DM), id="2 weak hilbert dm"),
     ),
     (
-        pytest.param((2, 3, 4, False), id="complex dm"),
-        pytest.param((2, 3, 4, False), id="complex dm"),
+        pytest.param((2, 3, 4, StateType.DM), id="complex dm"),
+        pytest.param((2, 3, 4, StateType.DM), id="complex dm"),
     ),
 ]
 
 
 _imcompatible_hilbert = [
-    (pytest.param((2, True), id="simple ket"), pytest.param((2, False), id="simple dm"),),
-    (pytest.param((2, True), id="2 ket"), pytest.param((3, True), id="3 ket"),),
-    (pytest.param((3, 2, True), id="3, 2 ket"), pytest.param((2, 3, True), id="2, 3 ket"),),
-    (pytest.param((3, 2, False), id="3, 2 dm"), pytest.param((2, 3, False), id="2, 3 dm"),),
-    (pytest.param((2, 4, False), id="2, 4 dm"), pytest.param((4 ,2, False), id="4, 2 dm"),),
+    (pytest.param((2, StateType.KET), id="simple ket"), pytest.param((2, StateType.DM), id="simple dm"),),
+    (pytest.param((2, StateType.KET), id="2 ket"), pytest.param((3, StateType.KET), id="3 ket"),),
+    (pytest.param((3, 2, StateType.KET), id="3, 2 ket"), pytest.param((2, 3, StateType.KET), id="2, 3 ket"),),
+    (pytest.param((3, 2, StateType.DM), id="3, 2 dm"), pytest.param((2, 3, StateType.DM), id="2, 3 dm"),),
+    (pytest.param((2, 4, StateType.DM), id="2, 4 dm"), pytest.param((4 ,2, StateType.DM), id="4, 2 dm"),),
+]
+
+# For matmul, we need shapes where left.shape[1] == right.shape[0]
+_matmul_compatible = [
+    (
+        pytest.param((2, 3, StateType.DM), id="2,3 dm"),
+        pytest.param((2, 3, StateType.DM), id="2,3 dm"),
+    ),
+    (
+        pytest.param((2, 3, 2, StateType.DM), id="2,3,2 dm"),
+        pytest.param((2, 3, 2, StateType.KET), id="2,3,2 ket"),
+    ),
+    (
+        pytest.param((2, 3, StateType.KET), id="2,3 ket"),
+        pytest.param((2, 3, StateType.BRA), id="2,3 bra"),
+    ),
+    (
+        pytest.param((2, 3, StateType.BRA), id="2,3 bra"),
+        pytest.param((2, 3, StateType.KET), id="2,3 ket"),
+    ),
+]
+
+_matmul_incompatible = [
+    (
+        pytest.param((2, 3, 2, StateType.DM), id="2,3,2 dm"),
+        pytest.param((2, 3, StateType.KET), id="2,3 ket"),
+    ),
+    (
+        pytest.param((2, 3, 4, StateType.DM), id="2,3,4 dm"),
+        pytest.param((2, 12, StateType.DM), id="2,12 dm"),
+    ),
+    (
+        pytest.param((2, 3, StateType.KET), id="2,3 ket"),        
+        pytest.param((2, 3, StateType.DM), id="2,3 dm"),
+    ),
+    (
+        pytest.param((2, 3, StateType.DM), id="2,3 dm"),                    
+        pytest.param((2, 3, StateType.BRA), id="2,3 bra"),        
+
+    ),    
 ]
 
 _kron_hilbert = [
     (
-        pytest.param((2, True), id="simple ket"),
-        pytest.param((3, True), id="simple ket"),),
+        pytest.param((2, StateType.KET), id="simple ket"),
+        pytest.param((3, StateType.KET), id="simple ket"),),
     (
-        pytest.param((2, 3, True), id="2 hilbert ket"),
-        pytest.param((2, True), id="simple ket"),),
+        pytest.param((2, 3, StateType.KET), id="2 hilbert ket"),
+        pytest.param((2, StateType.KET), id="simple ket"),),
     (
-        pytest.param((2, 4, 3, True), id="complex ket"),
-        pytest.param((4, 6, True), id="complex ket"),),
+        pytest.param((2, 4, 3, StateType.KET), id="complex ket"),
+        pytest.param((4, 6, StateType.KET), id="complex ket"),),
     (
-        pytest.param((2, False), id="simple dm"),
-        pytest.param((2, 3, False), id="2 hilbert dm"),),
+        pytest.param((2, StateType.DM), id="simple dm"),
+        pytest.param((2, 3, StateType.DM), id="2 hilbert dm"),),
     (
-        pytest.param((2, 3, 2, False), id="3 hilbert dm"),
-        pytest.param((2, 6, False), id="2 hilbert dm"),),
+        pytest.param((2, 3, 2, StateType.DM), id="3 hilbert dm"),
+        pytest.param((2, 6, StateType.DM), id="2 hilbert dm"),),
     (
-        pytest.param((2, 3, 4, False), id="complex dm"),
-        pytest.param((2, 6, 2, False), id="complex dm"),
+        pytest.param((2, 3, 4, StateType.DM), id="complex dm"),
+        pytest.param((2, 6, 2, StateType.DM), id="complex dm"),
     ),
 ]
 
@@ -191,6 +210,33 @@ class TestInner(test_tools.TestInner):
 
     shapes = [(hilbert[0], hilbert[0]) for hilbert in _unary_pure]
     bad_shapes = []
+
+
+class TestTranspose(test_tools.TestTranspose):
+    specialisations = [
+        pytest.param(transpose_cuState, CuState, CuState),
+    ]
+
+    shapes = _unary_pure + _unary_mixed
+    bad_shapes = []
+
+
+class TestAdjoint(test_tools.TestAdjoint):
+    specialisations = [
+        pytest.param(adjoint_cuState, CuState, CuState),
+    ]
+
+    shapes = _unary_pure + _unary_mixed
+    bad_shapes = []
+
+
+class TestMatmul(test_tools.TestMatmul):
+    specialisations = [
+        pytest.param(matmul_cuState, CuState, CuState, CuState),
+    ]
+
+    shapes = _matmul_compatible
+    bad_shapes = _matmul_incompatible
 
 
 def test_isherm():
