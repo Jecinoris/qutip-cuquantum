@@ -91,7 +91,7 @@ cdef class CuQobjEvo(QobjEvo):
             self.expect_ready = True
         # Workaround for a bug in cudensity 0.2.0.
         settings.cuDensity["ctx"].release_workspace()
-        return self.operator.compute_expectation(t, None, state.base)[0]
+        return self.operator.compute_expectation(t, None, state.base).get()[0]
 
     def arguments(self, args):
         raise NotImplementedError

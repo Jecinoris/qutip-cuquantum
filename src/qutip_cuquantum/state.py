@@ -1,3 +1,4 @@
+from typing import Any
 from cuquantum.densitymat import DensePureState, DenseMixedState
 
 import numpy as np
@@ -11,6 +12,11 @@ try:
     from qutip_cupy import CuPyDense
 except ImportError:
     CuPyDense = None
+
+try:
+    import mpi4py.MPI as MPI
+except ImportError:
+    MPI = None
 
 
 class CuState(Data):
@@ -30,48 +36,69 @@ class CuState(Data):
                 hilbert_dims = arg.hilbert_space_dims
             base = arg
 
-        elif CuPyDense is not None and isinstance(arg, CuPyDense):
+        elif (CuPyDense is not None and isinstance(arg, CuPyDense)) or isinstance(arg, cp.ndarray):
+            if CuPyDense is not None and isinstance(arg, CuPyDense):
+                arg = arg._cp
+
+            if arg.ndim == 1:
+                arg = arg.reshape(-1, 1)
+            elif arg.ndim > 2:
+                raise ValueError("Only 1D or 2D arrays are supported")
+
             if shape is None:
                 shape = arg.shape
             if hilbert_dims is None:
-                hilbert_dims = arg.shape[:1]
+                if(arg.shape[0] == 1):
+                    hilbert_dims = (arg.shape[1],)
+                else:
+                    hilbert_dims = (arg.shape[0],)
 
-            if arg.shape[0] != np.prod(hilbert_dims) or arg.shape[1] != 1:
-                # TODO: Add sanity check for hilbert_dims
+            if arg.shape[0] != 1 and arg.shape[1] != 1:
+                is_hilbert_dim_matching = (arg.shape[0] == np.prod(hilbert_dims) and arg.shape[1] == np.prod(hilbert_dims))
+                if not is_hilbert_dim_matching:
+                    raise ValueError(f"Shape {arg.shape} does not match hilbert_dims {hilbert_dims} for mixed state")
                 base = DenseMixedState(ctx, hilbert_dims, 1, "complex128")
                 sizes, offsets = base.local_info
                 sls = tuple(slice(s, s+n) for s, n in zip(offsets, sizes))[:-1]
                 N = np.prod(sizes)
-                if len(arg._cp) == N:
+                if len(arg) == N:
                     base.attach_storage(cp.array(
-                        arg._cp
+                        arg
                         .reshape(hilbert_dims * 2)[sls]
                         .ravel(order="F"),
+                        dtype="complex128",
                         copy=copy
                     ))
                 else:
                     base.allocate_storage()
                     base.storage[:N] = (
-                        arg._cp
+                        arg
                         .reshape(hilbert_dims * 2)[sls]
                         .ravel(order="F")
                     )
 
             else:
+                is_hilbert_dim_matching = ((arg.shape[1] == 1 and arg.shape[0] == np.prod(hilbert_dims)) or
+                                           (arg.shape[0] == 1 and arg.shape[1] == np.prod(hilbert_dims)))
+                if not is_hilbert_dim_matching:
+                    raise ValueError(f"Shape {arg.shape} does not match hilbert_dims {hilbert_dims} for pure state")
+
                 base = DensePureState(ctx, hilbert_dims, 1, "complex128")
                 sizes, offsets = base.local_info
                 sls = tuple(slice(s, s+n) for s, n in zip(offsets, sizes))[:-1]
                 N = np.prod(sizes)
-                if len(arg._cp) == N:
+                if len(arg) == N:
                     base.attach_storage(cp.array(
-                        arg._cp
+                        arg
                         .reshape(hilbert_dims)[sls]
-                        .ravel(order="F"), copy=copy
+                        .ravel(order="F"),
+                        dtype="complex128",
+                        copy=copy
                     ))
                 else:
                     base.allocate_storage()
                     base.storage[:N] = (
-                        arg._cp
+                        arg
                         .reshape(hilbert_dims)[sls]
                         .ravel(order="F")
                     )
@@ -122,17 +149,25 @@ class CuState(Data):
         return self.to_cupy(as_tensor).get()
 
     def to_cupy(self, as_tensor=False):
-        # TODO: How to implement for mpi?
         if type(self.base) is DenseMixedState:
             tensor_shape = self.base.hilbert_space_dims * 2
         else:
             tensor_shape = self.base.hilbert_space_dims
+
+        local_tensor = self.base.view()[..., 0]
         if self.base.local_info[0][:-1] != tensor_shape:
-            raise NotImplementedError(
-                "Not Implemented for MPI distributed array."
-                f"{self.base.local_info[0][:-1]} vs {self.base.hilbert_space_dims}"
-            )
-        tensor = self.base.view()[..., 0]
+            if MPI is None:
+                raise ImportError("mpi4py is not imported. Distributed tensor assembly requires mpi4py.")
+            comm = MPI.COMM_WORLD
+            tensor = cp.empty(tensor_shape, dtype=cp.complex128)
+            sizes, offsets = self.base.local_info
+            local_sls = tuple(slice(s, s+n) for s, n in zip(offsets, sizes))[:-1]
+            all_sls = comm.allgather(local_sls)
+            all_tensor = comm.allgather(local_tensor)
+            for rank in range(comm.Get_size()):
+                tensor[all_sls[rank]] = all_tensor[rank]
+        else:
+            tensor = local_tensor
         if not as_tensor:
             tensor = tensor.reshape(*self.shape, order="C")
         return tensor
@@ -145,7 +180,8 @@ class CuState(Data):
             if isinstance(other, Data):
                 return _data.add(self, other)
             return NotImplemented
-
+        if(self.shape != other.shape):
+            raise ValueError("Incompatible shapes")
         new = self.copy()
         new.base.inplace_accumulate(other.base, 1.)
         return new
@@ -156,6 +192,8 @@ class CuState(Data):
                 return _data.sub(self, other)
             return NotImplemented
 
+        if(self.shape != other.shape):
+            raise ValueError("Incompatible shapes")
         new = self.copy()
         new.base.inplace_accumulate(other.base, -1.)
         return new
@@ -175,17 +213,20 @@ class CuState(Data):
         )
 
     def transpose(self):
-        raise NotImplementedError()
+        arr = self.to_cupy().transpose()
+        return CuState(arr, hilbert_dims=self.base.hilbert_space_dims, shape=(self.shape[1], self.shape[0]))
+
 
     def adjoint(self):
-        raise NotImplementedError()
-
+        arr = self.to_cupy().transpose().conj()
+        return CuState(arr, hilbert_dims=self.base.hilbert_space_dims, shape=(self.shape[1], self.shape[0]))
 
 def CuState_from_Dense(mat):
     return CuState(mat)
 
 
 def Dense_from_CuState(mat):
+    print("Dense_from_CuState")
     return _data.Dense(mat.to_array())
 
 
@@ -300,3 +341,49 @@ def isherm(state, tol=-1):
 
 def zeros_like_cuState(state):
     return CuState(state.base.clone(cp.zeros_like(state.base.storage, order="F")))
+
+@_data.conj.register(CuState)
+def conj_cuState(state):
+    return state.conj()
+
+@_data.transpose.register(CuState)
+def transpose_cuState(state):
+    return state.transpose()
+
+@_data.adjoint.register(CuState)
+def adjoint_cuState(state):
+    return state.adjoint()
+
+@_data.sub.register(CuState)
+def sub_cuState(left, right):
+    return add_cuState(left, right, -1)
+    
+@_data.iszero.register(CuState)
+def iszero_cuState(state):
+    return not cp.any(state.base.storage)
+
+
+@_data.matmul.register(CuState)
+def matmul_cuState(left, right):
+    if(left.shape[1] != right.shape[0]):
+        raise ValueError("Incompatible shapes")
+
+    if left.base.hilbert_space_dims != right.base.hilbert_space_dims:
+        raise ValueError(
+            f"Incompatible hilbert space: {left.base.hilbert_space_dims} "
+            f"and {right.base.hilbert_space_dims}."
+        )
+
+    output_shape = (left.shape[0], right.shape[1])
+    ctx = settings.cuDensity["ctx"]
+    if(left.shape[0] == 1 and right.shape[1] == 1):
+        # Scalar case
+        hilbert_dims = (1,)    
+    else:
+        hilbert_dims = left.base.hilbert_space_dims
+
+    left_array = left.to_cupy()
+    right_array = right.to_cupy()
+    arr = left_array @ right_array
+    
+    return CuState(arr, hilbert_dims=hilbert_dims, shape=output_shape)

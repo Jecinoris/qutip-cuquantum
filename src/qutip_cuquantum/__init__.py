@@ -28,7 +28,7 @@ from qutip.core.options import QutipOptions
 from .operator import CuOperator
 from .state import CuState
 import numpy
-
+from .mixed_dispatch import * #Ensure that the mixed dispatch is registered
 
 # TODO: The split per density is not great
 # Add an operator / state split in qutip?
@@ -95,7 +95,6 @@ def set_as_default(ctx: cuquantum.densitymat.WorkStream=None, reverse=False):
     if not reverse:
         settings.cuDensity["ctx"] = ctx
         settings.core["default_dtype"] = "cuDensity"
-        settings.core['numpy_backend'] = cupy
 
         if True:  # if mpi, how to check from ctx?
             settings.core["auto_real_casting"] = False
@@ -111,7 +110,6 @@ def set_as_default(ctx: cuquantum.densitymat.WorkStream=None, reverse=False):
 
     else:
         settings.core["default_dtype"] = "core"
-        settings.core['numpy_backend'] = numpy
         settings.core["auto_real_casting"] = True
 
         SESolver.solver_options['method'] = "adams"
@@ -145,7 +143,6 @@ class CuQuantumBackend:
         self.previous_values["default_dtype"] = qutip.settings.core["default_dtype"]
         settings.core["default_dtype"] = "cuDensity"
         self.previous_values["numpy_backend"] = qutip.settings.core["numpy_backend"]
-        settings.core['numpy_backend'] = cupy
 
         self.previous_values["auto_real"] = settings.core["auto_real_casting"]
         if True:  # if mpi, how to check from ctx?
@@ -169,7 +166,6 @@ class CuQuantumBackend:
 
     def __exit__(self, exc_type, exc_value, traceback):
         settings.core["default_dtype"] = self.previous_values["default_dtype"]
-        settings.core['numpy_backend'] = self.previous_values["numpy_backend"]
         settings.core["auto_real_casting"] = self.previous_values["auto_real"]
         SESolver.solver_options['method'] = self.previous_values["SESolverM"]
         MESolver.solver_options['method'] = self.previous_values["MESolverM"]
