@@ -245,7 +245,7 @@ def trace_cuState(mat):
     if mat.shape[0] != mat.shape[1]:
         raise ValueError(...)
 
-    return complex(mat.base.trace())
+    return complex(mat.base.trace()[0])
 
 
 @_data.inner.register(CuState)
@@ -253,7 +253,7 @@ def inner_cuState(left, right, scalar_is_ket=False):
     if left.shape == (1, 1) and not scalar_is_ket:
         inner = left.base.storage[0] * right.base.storage[0]
     else:
-        inner = left.base.inner_product(right.base)
+        inner = left.base.inner_product(right.base)[0]
     return complex(inner)
 
 
@@ -288,7 +288,7 @@ def iadd_cuState(left, right, scale=1.):
 
 @_data.norm.frobenius.register(CuState)
 def frobenius_cuState(mat):
-    return float(mat.base.norm())**0.5
+    return float(mat.base.norm()[0])**0.5
 
 
 @_data.norm.l2.register(CuState)
@@ -307,7 +307,7 @@ def wrmn_error_cuState(diff, state, atol, rtol):
         )
     diff.base.storage[:] = cp.abs(diff.base.storage)
     diff.base.storage[:] = diff.base.storage / (atol + rtol * cp.abs(state.base.storage))
-    return float(diff.base.norm() / (diff.shape[0] * diff.shape[1]))**0.5
+    return float(diff.base.norm()[0] / (diff.shape[0] * diff.shape[1]))**0.5
 
 
 @_data.reshape.register(CuState)
