@@ -1,0 +1,30 @@
+---
+description: Source code conventions for qutip-cuquantum Python and Cython files
+globs: src/**/*.py,src/**/*.pyx
+alwaysApply: false
+---
+
+# Source Code Conventions
+
+## Data Type Classes
+- `CuOperator` and `CuState` inherit from `qutip.core.data.Data`
+- Must implement: `copy()`, `to_array()`, `conj()`, `transpose()`, `adjoint()`, `shape`
+- Register new dispatch functions via `qutip.core.data` (see `mixed_dispatch.py`)
+
+## Operator Structure
+- Operators are sums of `Term`s, each `Term` is a product of `ProdTerm`s
+- `ProdTerm` holds a cuQuantum elementary operator, target Hilbert mode index, and `Transform`
+- Conversion to GPU: `CuOperator.to_OperatorTerm(hilbert_dims, dual)` → `cuquantum.densitymat.OperatorTerm`
+
+## GPU Execution Pattern
+```python
+ctx = settings.cuDensity["ctx"]
+cu_op = Operator(ctx, operands, operator_term)
+cu_op.prepare_action(state._base)
+cu_op.compute_action(t, state._base, result._base)
+```
+
+## Cython (qobjevo.pyx)
+- Build requires QuTiP headers (see `setup.py` for include path logic)
+- Wraps `QobjEvo` list format: `[H0, [H1, coeff1], ...]`
+- Time-dependent coefficients become `CPUCallback` objects

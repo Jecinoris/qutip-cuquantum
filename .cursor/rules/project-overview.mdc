@@ -1,0 +1,24 @@
+---
+description: Project architecture and conventions for qutip-cuquantum
+alwaysApply: true
+---
+
+# qutip-cuquantum Project Context
+
+GPU backend for QuTiP using NVIDIA cuQuantum. Targets large composite quantum systems.
+
+## Key Types
+- `CuOperator(Data)` in `operator.py` — symbolic operator, wraps cuQuantum DenseOperator/MultidiagonalOperator
+- `CuState(Data)` in `state.py` — quantum state on GPU, wraps DensePureState/DenseMixedState
+- `CuQobjEvo(QobjEvo)` in `qobjevo.pyx` — Cython, time-dependent Hamiltonian wrapper
+
+## Critical Patterns
+- GPU context via `settings.cuDensity["ctx"]` (a `WorkStream` instance)
+- Hilbert dims tracked per mode; negative dims = "weak" modes during tensor products
+- `__init__.py` registers data types, conversions, integrators, and result classes with QuTiP
+- QuTiP entry point: `qutip.family` → `qutip_cuquantum.family`
+
+## Dependencies
+- Runtime: `qutip>=5.2.1`, `cupy`, `cuquantum-python` (CUDA-version specific)
+- Build: `Cython`, `setuptools`, `numpy`
+- Optional: `mpi4py` (multi-GPU), `qutip-cupy` (CuPyDense conversions)

@@ -1,0 +1,27 @@
+---
+description: Testing patterns for qutip-cuquantum
+globs: tests/**/*.py
+alwaysApply: false
+---
+
+# Testing Conventions
+
+## Setup
+- Tests require a GPU and all runtime dependencies (cupy, cuquantum-python, qutip)
+- Run with: `pytest tests/`
+- Test utilities in `tests/utils.py`
+
+## Test Structure
+- `test_operator.py` — CuOperator arithmetic, transforms, kron, OperatorTerm conversion
+- `test_state.py` — CuState creation (pure/mixed), norms, traces, arithmetic
+- `test_solver.py` — end-to-end sesolve/mesolve/mcsolve with GPU backend
+- `test_mixed.py` — CuOperator @ CuState dispatch
+- `test_mpi.py` — multi-GPU distributed states (requires mpi4py)
+
+## Key Pattern
+Every test that uses GPU needs a WorkStream context:
+```python
+from cuquantum.densitymat import WorkStream
+import qutip_cuquantum
+qutip_cuquantum.set_as_default(WorkStream())
+```
