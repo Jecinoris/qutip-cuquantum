@@ -757,7 +757,7 @@ def identity_like(data, /):
 
 
 @_data.iszero.register(CuOperator)
-def iszero_CuOperator(state):
+def iszero_CuOperator(state, tol=...):
     for term in state.terms:
         if term.factor != 0:
             return False
